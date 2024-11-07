@@ -12,11 +12,9 @@ export const formatCurrency = (amount) => {
   }).format(amount);
 };
 
-export const calculatePriceChange = (oldPrice, newPrice) => {
-  const difference = newPrice - oldPrice;
-  const percentageChange = (difference / oldPrice) * 100;
-  return {
-    difference,
-    percentageChange
-  };
+export const calculatePriceChange = (currentPrice, previousPrice) => {
+  if (!previousPrice) return 0;
+  const priceChange = currentPrice - previousPrice;
+  const priceChangePercent = (priceChange / previousPrice) * 100;
+  return { priceChange, priceChangePercent: priceChangePercent.toFixed(1) };
 };

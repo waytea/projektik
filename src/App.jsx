@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { SearchIcon, PlusCircle, ArrowDownIcon, ArrowUpIcon } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/toast-context';
-import { formatCurrency, calculatePriceChange } from '@/lib/utils'; // Create these utility functions
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { formatCurrency, calculatePriceChange } from '@/lib/utils';
+import * as Yup from 'yup';
 
-// Separate components into their own files in practice
 const Header = React.memo(() => (
   <header className="flex items-center justify-between p-4 border-b">
     <a href="/" className="text-2xl font-bold text-primary">PriceTrack</a>
@@ -20,12 +21,15 @@ const Header = React.memo(() => (
 ));
 
 const ProductCard = React.memo(({ product }) => {
-  const priceChangeAbs = Math.abs(product.priceChange);
-  const isNegativeChange = product.priceChange < 0;
+  const { priceChange, priceChangePercent } = calculatePriceChange(
+    product.currentPrice,
+    product.priceHistory?.[product.priceHistory.length - 1]?.price
+  );
+  const isNegativeChange = priceChange < 0;
 
   return (
-    <Card className="mb-4">
-      <CardContent className="p-4">
+    <Card className="mb-4" onClick={() => handleProductClick(product.id)}>
+      <CardContent className="p-4 cursor-pointer">
         <div className="flex justify-between items-start">
           <div>
             <h3 className="text-lg font-semibold">{product.name}</h3>
@@ -41,7 +45,7 @@ const ProductCard = React.memo(({ product }) => {
               ) : (
                 <ArrowUpIcon className="w-4 h-4" />
               )}
-              {formatCurrency(priceChangeAbs)} ({product.priceChangePercent.toFixed(1)}%)
+              {formatCurrency(Math.abs(priceChange))} ({priceChangePercent}%)
             </div>
           </div>
         </div>
@@ -50,43 +54,23 @@ const ProductCard = React.memo(({ product }) => {
   );
 });
 
-const ProductList = () => {
+const ProductList = ({ searchQuery, products }) => {
   const [sortType, setSortType] = useState('name');
-  const [products, setProducts] = useState([
-    {
-      id: 1,
-      name: 'Smartphone X',
-      platform: 'Tokopedia',
-      currentPrice: 3500000,
-      priceChange: -200000,
-      priceChangePercent: 5.4
-    },
-	{
-	id: 2,
-      name: 'Laptop Y',
-      platform: 'Shopee',
-      currentPrice: 7640000,
-      priceChange: -350000,
-      priceChangePercent: 2.4
-	},
-	{
-	id: 3,
-      name: 'Sendal Jepit',
-      platform: 'Bukalapak',
-      currentPrice: 30000,
-      priceChange: +1000,
-      priceChangePercent: 0.1
-	}
-  ]);
 
-  const sortedProducts = React.useMemo(() => {
-    return [...products].sort((a, b) => {
+  const filteredProducts = useMemo(() => {
+    return products.filter(product =>
+      product.name.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [products, searchQuery]);
+
+  const sortedProducts = useMemo(() => {
+    return [...filteredProducts].sort((a, b) => {
       if (sortType === 'name') {
         return a.name.localeCompare(b.name);
       }
       return sortType === 'price' ? a.currentPrice - b.currentPrice : 0;
     });
-  }, [products, sortType]);
+  }, [filteredProducts, sortType]);
 
   return (
     <div>
@@ -122,22 +106,39 @@ const TrackNewForm = () => {
     platform: ''
   });
 
+  const validationSchema = Yup.object().shape({
+    url: Yup.string().url('Invalid URL').required('URL is required'),
+    platform: Yup.string().required('Platform is required')
+  });
+
   const handleSubmit = useCallback(async (e) => {
     e.preventDefault();
     try {
+      await validationSchema.validate(formData, { abortEarly: false });
       // Add API call here
       toast({
         title: "Success",
         description: "Product tracking started successfully",
       });
+      setFormData({ url: '', platform: '' });
     } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to start tracking product",
-        variant: "destructive",
-      });
+      if (error instanceof Yup.ValidationError) {
+        error.inner.forEach(err => {
+          toast({
+            title: err.path,
+            description: err.message,
+            variant: "destructive"
+          });
+        });
+      } else {
+        toast({
+          title: "Error",
+          description: "Failed to start tracking product",
+          variant: "destructive",
+        });
+      }
     }
-  }, [formData, toast]);
+  }, [formData, toast, validationSchema]);
 
   return (
     <form onSubmit={handleSubmit} className="max-w-2xl mx-auto p-4">
@@ -151,7 +152,6 @@ const TrackNewForm = () => {
             value={formData.url}
             onChange={(e) => setFormData(prev => ({ ...prev, url: e.target.value }))}
             placeholder="Enter product URL"
-            required
           />
         </div>
         <div>
@@ -159,7 +159,6 @@ const TrackNewForm = () => {
           <Select
             value={formData.platform}
             onValueChange={(value) => setFormData(prev => ({ ...prev, platform: value }))}
-            required
           >
             <SelectTrigger id="platform">
               <SelectValue placeholder="Select a platform" />
@@ -179,6 +178,58 @@ const TrackNewForm = () => {
 
 const App = () => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [products, setProducts] = useState([
+    {
+      id: 1,
+      name: 'Smartphone X',
+      platform: 'Tokopedia',
+      currentPrice: 3500000,
+      priceChange: -200000,
+      priceChangePercent: 5.4,
+      priceHistory: [
+        { date: '2023-04-01', price: 3700000 },
+        { date: '2023-04-15', price: 3650000 },
+        { date: '2023-05-01', price: 3600000 },
+        { date: '2023-05-15', price: 3550000 },
+        { date: '2023-06-01', price: 3500000 }
+      ]
+    },
+    {
+      id: 2,
+      name: 'Laptop Y',
+      platform: 'Shopee',
+      currentPrice: 7640000,
+      priceChange: -350000,
+      priceChangePercent: 2.4,
+      priceHistory: [
+        { date: '2023-03-01', price: 7990000 },
+        { date: '2023-03-15', price: 7890000 },
+        { date: '2023-04-01', price: 7790000 },
+        { date: '2023-04-15', price: 7690000 },
+        { date: '2023-05-01', price: 7640000 }
+      ]
+    },
+    {
+      id: 3,
+      name: 'Sendal Jepit',
+      platform: 'Bukalapak',
+      currentPrice: 30000,
+      priceChange: 1000,
+      priceChangePercent: 0.1,
+      priceHistory: [
+        { date: '2023-02-01', price: 29000 },
+        { date: '2023-02-15', price: 29500 },
+        { date: '2023-03-01', price: 29750 },
+        { date: '2023-03-15', price: 30000 },
+        { date: '2023-04-01', price: 30000 }
+      ]
+    }
+  ]);
+
+  const handleProductClick = (id) => {
+    // Navigate to product detail page or show modal
+    console.log(`Clicked product with ID: ${id}`);
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -204,7 +255,7 @@ const App = () => {
           </TabsList>
           
           <TabsContent value="my-products">
-            <ProductList />
+            <ProductList searchQuery={searchQuery} products={products} />
           </TabsContent>
           
           <TabsContent value="price-alerts">
@@ -222,7 +273,16 @@ const App = () => {
               <h2 className="text-xl font-semibold">Price History Chart</h2>
             </CardHeader>
             <CardContent>
-              {/* Add chart component here */}
+              <ResponsiveContainer width="100%" height={400}>
+                <LineChart data={products.flatMap(p => p.priceHistory)}>
+                  <XAxis dataKey="date" />
+                  <YAxis unit="IDR" domain={['dataMin', 'dataMax']} />
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <Tooltip />
+                  <Legend />
+                  <Line type="monotone" dataKey="price" stroke="#8884d8" />
+                </LineChart>
+              </ResponsiveContainer>
             </CardContent>
           </Card>
         </div>
